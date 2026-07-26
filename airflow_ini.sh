@@ -25,7 +25,6 @@ CONSTRAINT_URL="https://raw.githubusercontent.com/apache/airflow/constraints-${A
 
 pip install "apache-airflow==${AIRFLOW_VERSION}" --constraint "${CONSTRAINT_URL}"
 
-#inside airflow-env
 
 export AIRFLOW_HOME=~/airflow
 
