@@ -1,5 +1,6 @@
 #!/bin/bash
 #
+#
 java -version
 
 sudo apt-get update
