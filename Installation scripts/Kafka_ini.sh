@@ -1,5 +1,21 @@
 #!/bin/bash
 #
+# Script Name: Kafka_ini.sh
+# Description: This script automates the installation and basic setup of Apache Kafka.
+#              It downloads Kafka, extracts it, and performs initial configurations
+#              for standalone mode, including formatting storage and starting the server.
+#
+# Usage: ./Kafka_ini.sh
+#
+# Prerequisites:
+#   - Java Development Kit (JDK)
+#   - wget
+#   - tar
+#   - sudo privileges for apt-get
+#
+# Author: Manish Dhodare
+# Date: August 1, 2026
+# Version: 1.0
 #
 java -version
 
