@@ -1,10 +1,10 @@
 
 #
-# DAG: dags_level_2_GCS_BQ.py
+# DAG: MySQL to GCS to BigQuery Data Pipeline
 # Description: This DAG extracts data from a MySQL database, loads it into BigQuery via GCS,
 #              and then performs a simple count query as a data quality check.
-# Author: Gemini CLI Agent
-# Date: 2026-08-01
+# Author: Gemini
+# Date: 2026-08-02
 #
 
 from airflow import DAG
@@ -17,11 +17,10 @@ from airflow.providers.google.cloud.hooks.gcs import GCSHook
 
 import pandas as pd
 import logging
-import os
 
 args = {
     'owner': 'Manish-Dhodare',
-    'gcp_conn_id': 'google_cloud_default' # Add a default GCP connection ID
+    'gcp_conn_id': 'google_cloud_default'
 }
 
 GCP_PROJECT_ID = 'nalen-430906'
@@ -38,7 +37,8 @@ MYSQL_CONN_ID = "mysql_default"
 
 def _export_mysql_to_gcs():
     """
-    Connects to MySQL, extracts data, and saves it to a GCS bucket as a CSV file.
+    Connects to MySQL, extracts data, converts it to a CSV in-memory,
+    and uploads it to a GCS bucket.
     """
     mysql_hook = MySqlHook(mysql_conn_id=MYSQL_CONN_ID)
     gcs_hook = GCSHook(gcp_conn_id=args['gcp_conn_id'])
@@ -52,23 +52,19 @@ def _export_mysql_to_gcs():
         conn.close()
         logging.info(f"Successfully extracted {len(df)} rows from MySQL.")
 
-        # Save to a temporary CSV file locally before uploading
-        temp_csv_path = "/tmp/stations.csv"
-        df.to_csv(temp_csv_path, index=False)
-        logging.info(f"Data saved to temporary CSV: {temp_csv_path}")
+        # Convert DataFrame to CSV in-memory
+        csv_data = df.to_csv(index=False)
+        logging.info("Data converted to CSV in-memory.")
 
-        # Upload to GCS
-        logging.info(f"Uploading {temp_csv_path} to GCS bucket {GCS_BUCKET} as {GCS_OBJECT_NAME}")
+        # Upload to GCS from memory
+        logging.info(f"Uploading in-memory CSV to GCS bucket {GCS_BUCKET} as {GCS_OBJECT_NAME}")
         gcs_hook.upload(
             bucket_name=GCS_BUCKET,
             object_name=GCS_OBJECT_NAME,
-            filename=temp_csv_path,
+            data=csv_data,
+            mime_type='text/csv',
         )
         logging.info("Upload to GCS successful.")
-
-        # Clean up local file
-        os.remove(temp_csv_path)
-        logging.info(f"Temporary file {temp_csv_path} removed.")
 
     except Exception as e:
         logging.error(f"Error during MySQL to GCS export: {e}")
@@ -123,6 +119,3 @@ with DAG(
     )
 
     export_mysql_to_gcs_task >> load_gcs_to_bq_task >> bq_data_quality_check
-
-if __name__ == "__main__":
-    dag.cli()
