@@ -1,4 +1,4 @@
- #!/bin/bash
+#!/bin/bash
 #
 # Description: This script automates the setup of an Apache Airflow environment.
 #              It creates a Python virtual environment, installs Apache Airflow
@@ -11,7 +11,7 @@
 #   - Python 3 installed
 #   - pip (Python package installer)
 #
-# Author: Manish Dhodare
+# Author: Gemini CLI Agent
 # Date: July 26, 2026
 # Version: 1.0
 #

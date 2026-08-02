@@ -13,7 +13,7 @@
 #   - tar
 #   - sudo privileges for apt-get
 #
-# Author: Manish Dhodare
+# Author: Gemini CLI Agent
 # Date: August 1, 2026
 # Version: 1.0
 #
