@@ -1,0 +1,8 @@
+Project 3: Distributed Trade Surveillance & Market Abuse Detector
+Core Focus: High-frequency data processing, time-series analysis, and complex pattern matching.
+* The Scenario: Develop a processing engine capable of analyzing stock trade order books to identify market manipulation tactics like spoofing (placing non-bona fide orders to deceive the market) or wash trading (buying and selling the same asset to fake volume).
+* Tech Stack: Python, TimescaleDB or ClickHouse (columnar time-series databases), and FastAPI (for serving alert metrics).
+* Key Engineering Features to Implement:
+    * Time-Series Optimization: Ingest trade and order book logs into a time-series optimized database, setting up efficient indexing on symbols and microsecond-level timestamps.
+    * Pattern Detection Engines: Write optimized SQL or PySpark queries to detect wash trading by identifying matching buyer/seller IDs executing identical trades within a tight sub-second window.
+    * Surveillance Dashboard API: A backend service that exposes endpoints for compliance officers to query historical alerts, aggregate daily risk exposure by trader, and extract audit logs.
