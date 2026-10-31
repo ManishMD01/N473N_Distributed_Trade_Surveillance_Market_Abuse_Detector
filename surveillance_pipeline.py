@@ -75,7 +75,7 @@ class SurveillancePipeline:
     
     def _define_order_schema(self) -> StructType:
         """
-        Enforce strict schema corresponding to JSON objects from Part 2.
+        Enforce strict schema corresponding to JSON objects from market simulator.
         Fields: timestamp (epoch ms), order_id, trader_id, symbol, side, 
         action, price, quantity, ip_address, routing_account
         """
@@ -141,17 +141,11 @@ class SurveillancePipeline:
             # Count of CANCEL actions
             count(when(col("action") == "CANCEL", 1)).alias("cancel_count"),
             
-            # Total quantity of NEW actions
-            spark_sum(when(col("action") == "NEW", col("quantity")).otherwise(0)).alias("new_quantity_total"),
-            
-            # Total quantity of CANCEL actions
-            spark_sum(when(col("action") == "CANCEL", col("quantity")).otherwise(0)).alias("cancel_quantity_total"),
-            
             # Window boundaries
             spark_max("event_timestamp").alias("window_end_time"),
             spark_min("event_timestamp").alias("window_start_time"),
             
-            # Additional metrics for execution horizon calculation
+            # Additional metrics
             count("*").alias("total_orders")
         )
         
@@ -161,13 +155,13 @@ class SurveillancePipeline:
                        when(col("fill_count") > 0, 
                             col("new_order_count").cast("double") / col("fill_count").cast("double"))
                        .otherwise(lit(float('inf')))) \
-            .withColumn("cancellation_percentage",
-                       when(col("new_quantity_total") > 0,
-                            (col("cancel_quantity_total").cast("double") / 
-                             col("new_quantity_total").cast("double")) * 100.0)
+            .withColumn("cancellation_rate",
+                       when(col("new_order_count") > 0,
+                            (col("cancel_count").cast("double") / 
+                             col("new_order_count").cast("double")))
                        .otherwise(lit(0.0)))
         
-        # Calculate Average Execution Horizon: time between NEW and corresponding CANCEL
+        # Calculate Average Execution Horizon: time between order's 'NEW' timestamp and its 'CANCEL' timestamp
         execution_horizon_df = self._calculate_execution_horizon(parsed_df, windowed_df)
         
         # Join execution horizon metrics
@@ -185,8 +179,8 @@ class SurveillancePipeline:
     
     def _calculate_execution_horizon(self, parsed_df, windowed_df):
         """
-        Calculate Average time in milliseconds between a trader's 'NEW' order 
-        and its corresponding 'CANCEL'.
+        Calculate Average time in milliseconds between an order's 'NEW' timestamp 
+        and its 'CANCEL' timestamp.
         """
         # Create pairs of NEW and CANCEL orders for same trader/symbol
         new_orders = parsed_df \
@@ -209,12 +203,13 @@ class SurveillancePipeline:
                 col("event_time_unix_ms").alias("cancel_time_ms")
             )
         
-        # Join NEW and CANCEL orders (simplified pairing by trader/symbol)
-        # In production, would need more sophisticated matching by order_id references
+        # Join NEW and CANCEL orders (simplified pairing by order_id for spoofing pattern)
         order_pairs = new_orders \
             .join(
                 cancel_orders,
-                ["trader_id", "symbol"],
+                (new_orders.new_order_id == cancel_orders.cancel_order_id) &
+                (new_orders.trader_id == cancel_orders.trader_id) &
+                (new_orders.symbol == cancel_orders.symbol),
                 "inner"
             ) \
             .withColumn("execution_horizon_ms", 
@@ -241,13 +236,13 @@ class SurveillancePipeline:
         """
         Flag alert records if trader's window exceeds:
         - OTR > 5
-        - Cancellation Percentage > 80%
+        - Cancellation Rate > 80%
         - Execution Horizon < 2000ms
         """
         alerts_df = final_metrics_df \
             .filter(
                 (col("order_to_trade_ratio") > 5.0) &
-                (col("cancellation_percentage") > 80.0) &
+                (col("cancellation_rate") > 0.80) &
                 (col("avg_execution_horizon_ms") < 2000.0)
             ) \
             .select(
@@ -265,26 +260,24 @@ class SurveillancePipeline:
                 
                 # Computed metrics
                 col("order_to_trade_ratio"),
-                col("cancellation_percentage"),
+                col("cancellation_rate"),
                 col("avg_execution_horizon_ms"),
                 
                 # Supporting metrics
                 col("new_order_count"),
                 col("fill_count"),
                 col("cancel_count"),
-                col("new_quantity_total"),
-                col("cancel_quantity_total"),
                 col("total_orders"),
                 
                 # Alert classification
-                lit("SPOOFING_SUSPECTED").alias("alert_type"),
+                lit("SPOOFING").alias("alert_type"),
                 lit("HIGH").alias("alert_severity"),
                 lit("L3_ORDER_BOOK_ANALYSIS").alias("detection_method"),
                 
                 # Additional context
-                format_string("OTR:%.2f, Cancel%%:%.2f, ExecHorizon:%dms",
+                format_string("OTR:%.2f, CancelRate:%.2f%%, ExecHorizon:%dms",
                              col("order_to_trade_ratio"),
-                             col("cancellation_percentage"),
+                             col("cancellation_rate") * 100.0,
                              col("avg_execution_horizon_ms").cast("long")).alias("alert_description")
             )
         
@@ -308,13 +301,11 @@ CREATE TABLE IF NOT EXISTS `{self.bigquery_project}.{self.bigquery_dataset}.{sel
   trader_id STRING NOT NULL,
   symbol STRING NOT NULL,
   order_to_trade_ratio FLOAT64,
-  cancellation_percentage FLOAT64,
+  cancellation_rate FLOAT64,
   avg_execution_horizon_ms FLOAT64,
   new_order_count INT64,
   fill_count INT64,
   cancel_count INT64,
-  new_quantity_total INT64,
-  cancel_quantity_total INT64,
   total_orders INT64,
   alert_type STRING,
   alert_severity STRING,
@@ -324,8 +315,8 @@ CREATE TABLE IF NOT EXISTS `{self.bigquery_project}.{self.bigquery_dataset}.{sel
 PARTITION BY alert_date
 CLUSTER BY trader_id, symbol
 OPTIONS(
-  description="Market abuse alerts generated from L3 order book surveillance pipeline",
-  labels=[("environment", "production"), ("team", "fincrime"), ("pipeline", "surveillance")]
+  description="Market abuse alerts generated from L3 order book surveillance pipeline - SEC Rule 10b-5 compliance",
+  labels=[("environment", "production"), ("team", "fincrime"), ("pipeline", "surveillance"), ("compliance", "sec_finra")]
 );
 """
         return ddl
@@ -375,7 +366,7 @@ OPTIONS(
             metrics_df = self.compute_surveillance_metrics(parsed_df)
             
             # Flag alerts
-            print("[3/4] Flagging alerts (OTR>5, Cancel%>80%, ExecHorizon<2000ms)...")
+            print("[3/4] Flagging alerts (OTR>5, CancelRate>80%, ExecHorizon<2000ms)...")
             alerts_df = self.flag_alerts(metrics_df)
             
             # Write to BigQuery

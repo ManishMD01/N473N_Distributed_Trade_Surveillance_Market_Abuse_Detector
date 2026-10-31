@@ -94,13 +94,9 @@ class MarketSimulator:
         """
         Create a standardized L3 order book event.
         
-        Args:
-            trader_id: ID of the trader placing the order
-            symbol: Trading symbol
-            side: BUY or SELL
-            action: NEW, CANCEL, or FILL
-            price: Order price
-            quantity: Order quantity
+        Schema fields: timestamp (epoch ms), order_id, trader_id, symbol, 
+        side (BUY/SELL), action (NEW, CANCEL, FILL), price (float), 
+        quantity (int), ip_address (string), routing_account (string)
         """
         return {
             "timestamp": int(time.time() * 1000),  # epoch ms
@@ -118,26 +114,22 @@ class MarketSimulator:
     def send_order(self, order_event: Dict[str, Any]):
         """Send order event to Kafka topic."""
         try:
-            # Use order_id as key for partitioning
             future = self.producer.send(
                 self.topic, 
                 key=order_event['order_id'], 
                 value=order_event
             )
-            # Optional: wait for confirmation (disabled for high throughput)
-            # future.get(timeout=10)
         except KafkaError as e:
             print(f"Error sending order to Kafka: {e}")
     
     def inject_spoofing_pattern(self):
         """
-        Inject a clear, deterministic 'Spoofing' pattern every 30 seconds.
+        Inject a clear, deterministic 'Spoofing' anomaly every 30 seconds.
         
         Pattern:
-        1. Place 5 massive BUY orders (NEW) far below the best bid
-        2. Wait exactly 500ms to create false market depth pressure
-        3. Rapidly issue CANCEL commands for all 5 orders immediately after
-           a small matching transaction executes
+        1. Place 5 massive BUY orders (NEW) far below the current best bid (creating fake demand)
+        2. Wait 800 milliseconds
+        3. Issue 5 CANCEL actions immediately after a separate small target SELL order executes
         """
         print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
               f"*** INJECTING SPOOFING PATTERN - TRADER: {self.spoof_trader} ***")
@@ -145,159 +137,110 @@ class MarketSimulator:
         symbol = random.choice(self.symbols)
         current_price = self.current_prices[symbol]
         
-        # Place 5 massive BUY orders far below the best bid (10-15% below)
+        # Place 5 massive BUY orders far below the best bid (10-15% below to create fake demand)
         spoof_orders = []
         for i in range(5):
-            # Place orders significantly below market (spoofing layer)
             spoof_price = round(current_price * random.uniform(0.85, 0.90), 2)  # 10-15% below
-            spoof_quantity = random.randint(5000, 10000)  # Massive orders
-            
+            spoof_qty = random.randint(50000, 100000)  # Massive orders
             order_event = self.create_order_event(
-                trader_id=self.spoof_trader,
-                symbol=symbol,
-                side='BUY',
-                action='NEW',
-                price=spoof_price,
-                quantity=spoof_quantity
+                self.spoof_trader, symbol, "BUY", "NEW", spoof_price, spoof_qty
             )
-            spoof_orders.append(order_event)
             self.send_order(order_event)
-            print(f"  [SPOOF] NEW BUY {order_event['order_id']} @ ${spoof_price} "
-                  f"qty={spoof_quantity} (far below market ${current_price})")
-            time.sleep(0.01)  # Small delay between spoof orders
+            spoof_orders.append(order_event)
+            print(f"  [SPOOF] NEW BUY {spoof_qty} @ {spoof_price} (Order: {order_event['order_id']})")
+            time.sleep(0.02)  # Small delay between orders
         
-        # Wait exactly 500ms to create false market depth pressure
-        print(f"  [SPOOF] Creating false market depth pressure... waiting 500ms")
-        time.sleep(0.5)
+        # Wait 800 milliseconds as specified
+        print(f"  [SPOOF] Waiting 800ms...")
+        time.sleep(0.8)
         
-        # Execute a small matching transaction (to trigger the cancel pattern)
-        print(f"  [SPOOF] Executing small matching transaction to trigger cancels...")
-        legitimate_trader = random.choice([t for t in self.traders if t != self.spoof_trader])
-        small_fill_price = round(current_price * random.uniform(0.99, 1.01), 2)
-        small_fill_quantity = random.randint(10, 50)
+        # Execute a separate small target SELL order to trigger the pattern
+        target_sell_qty = random.randint(100, 500)
+        target_sell_order = self.create_order_event(
+            random.choice(self.traders), symbol, "SELL", "NEW", current_price, target_sell_qty
+        )
+        self.send_order(target_sell_order)
+        print(f"  [TRIGGER] NEW SELL {target_sell_qty} @ {current_price}")
+        time.sleep(0.01)
         
+        # Execute FILL for target sell order
         fill_order = self.create_order_event(
-            trader_id=legitimate_trader,
-            symbol=symbol,
-            side='SELL',
-            action='FILL',
-            price=small_fill_price,
-            quantity=small_fill_quantity
+            target_sell_order['trader_id'], symbol, "SELL", "FILL", 
+            target_sell_order['price'], target_sell_order['quantity']
         )
         self.send_order(fill_order)
-        print(f"  [LEGIT] FILL {fill_order['order_id']} SELL {legitimate_trader} "
-              f"@ ${small_fill_price} qty={small_fill_quantity}")
+        print(f"  [TRIGGER] FILL SELL {target_sell_qty} @ {current_price}")
+        time.sleep(0.05)
         
-        # Rapidly issue CANCEL commands for all 5 spoof orders
-        print(f"  [SPOOF] Rapidly cancelling all spoof orders...")
-        for order_event in spoof_orders:
-            cancel_event = self.create_order_event(
-                trader_id=self.spoof_trader,
-                symbol=symbol,
-                side=order_event['side'],
-                action='CANCEL',
-                price=order_event['price'],
-                quantity=order_event['quantity']
+        # Issue 5 CANCEL actions immediately after
+        print(f"  [SPOOF] Cancelling all spoof orders...")
+        for spoof_order in spoof_orders:
+            cancel_order = self.create_order_event(
+                self.spoof_trader, symbol, "BUY", "CANCEL", 
+                spoof_order['price'], spoof_order['quantity']
             )
-            # Use same order_id context conceptually - in real system would reference original
-            cancel_event['original_order_id'] = order_event['order_id']
-            self.send_order(cancel_event)
-            print(f"  [SPOOF] CANCEL {cancel_event['order_id']} (orig: {order_event['order_id']})")
-            time.sleep(0.005)  # Very rapid cancellation
+            # Use same order context for cancellation
+            cancel_order['order_id'] = spoof_order['order_id']  # Cancel the specific order
+            self.send_order(cancel_order)
+            print(f"  [SPOOF] CANCEL BUY @ {spoof_order['price']} (Order: {cancel_order['order_id']})")
+            time.sleep(0.01)
         
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-              f"*** SPOOFING PATTERN COMPLETE ***\n")
-        
-        self.last_spoof_time = time.time()
+        print(f"  [SPOOF] Pattern complete - {len(spoof_orders)} orders placed and cancelled\n")
     
-    def generate_normal_activity(self):
-        """Generate normal market activity."""
+    def generate_normal_trading(self):
+        """Generate normal random trading activity."""
         symbol = random.choice(self.symbols)
-        trader_id = random.choice(self.traders)
+        trader = random.choice(self.traders)
         side = random.choice(['BUY', 'SELL'])
-        action = random.choices(['NEW', 'CANCEL', 'FILL'], weights=[0.6, 0.2, 0.2])[0]
+        action = random.choices(['NEW', 'FILL', 'CANCEL'], weights=[0.6, 0.3, 0.1])[0]
         
-        current_price = self.current_prices[symbol]
+        price = self.get_realistic_price(symbol)
+        if side == 'BUY':
+            price = round(price * random.uniform(0.9995, 1.0005), 2)
+        else:
+            price = round(price * random.uniform(0.9995, 1.0005), 2)
         
-        if action == 'NEW':
-            # New orders around current price
-            price_variance = random.uniform(-0.02, 0.02)
-            price = round(current_price * (1 + price_variance), 2)
-            quantity = random.randint(1, 1000)
-        elif action == 'CANCEL':
-            # Cancellations of existing orders
-            price_variance = random.uniform(-0.015, 0.015)
-            price = round(current_price * (1 + price_variance), 2)
-            quantity = random.randint(1, 500)
-        else:  # FILL
-            # Fills at market-like prices
-            price_variance = random.uniform(-0.01, 0.01)
-            price = round(current_price * (1 + price_variance), 2)
-            quantity = random.randint(1, 200)
+        quantity = random.randint(10, 1000)
         
-        order_event = self.create_order_event(
-            trader_id=trader_id,
-            symbol=symbol,
-            side=side,
-            action=action,
-            price=price,
-            quantity=quantity
-        )
-        
+        order_event = self.create_order_event(trader, symbol, side, action, price, quantity)
         self.send_order(order_event)
-        return order_event
     
-    def run(self):
-        """Run the market simulator continuously."""
+    def run(self, duration_minutes: int = None):
+        """Run the market simulator."""
         try:
             self.connect_kafka()
-            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-                  f"Starting L3 order book simulation...")
-            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-                  f"Spoofing injection every {self.spoof_interval} seconds")
-            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-                  f"Press Ctrl+C to stop\n")
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting market simulation...")
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Normal trading + Spoofing every 30 seconds")
+            print("=" * 80)
             
+            start_time = time.time()
             while True:
-                current_time = time.time()
+                if duration_minutes and (time.time() - start_time) > duration_minutes * 60:
+                    break
                 
-                # Check if it's time to inject spoofing pattern (every 30 seconds)
+                current_time = time.time()
+                # Check if it's time to inject spoofing
                 if current_time - self.last_spoof_time >= self.spoof_interval:
                     self.inject_spoofing_pattern()
+                    self.last_spoof_time = current_time
                 
-                # Generate normal market activity
-                order_event = self.generate_normal_activity()
+                # Generate normal trading activity
+                self.generate_normal_trading()
                 
-                # Log activity occasionally
-                if random.random() < 0.01:  # Log 1% of orders
-                    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] "
-                          f"{order_event['action']} {order_event['side']} "
-                          f"{order_event['symbol']} {order_event['trader_id']} "
-                          f"@${order_event['price']} qty={order_event['quantity']}")
-                
-                # Sleep 10ms between loops for high rate simulation
-                time.sleep(0.01)
+                # Random delay between orders (10-100ms for realistic high frequency)
+                time.sleep(random.uniform(0.01, 0.1))
                 
         except KeyboardInterrupt:
-            print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-                  f"Shutting down market simulator...")
+            print("\n\nShutting down market simulator...")
+            if self.producer:
+                self.producer.close()
         except Exception as e:
             print(f"Error in market simulator: {e}")
             raise
-        finally:
-            if self.producer:
-                self.producer.flush()
-                self.producer.close()
-                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-                      f"Kafka producer closed.")
 
 
 def main():
-    """Main entry point."""
-    simulator = MarketSimulator(
-        bootstrap_servers='localhost:9092',
-        topic='market-orders'
-    )
+    simulator = MarketSimulator()
     simulator.run()
 
 

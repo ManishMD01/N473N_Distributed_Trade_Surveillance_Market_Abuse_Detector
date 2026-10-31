@@ -1,298 +1,282 @@
 -- =====================================================
--- Part 5: Historical Analytics - 90-Day Rolling Compliance Audit
+-- HISTORICAL REPORTING ANALYTICS
 -- Distributed Trade Surveillance & Market Abuse Detector
 -- =====================================================
 
--- Database/Schema Reference
--- Table: your-gcp-project-id.surveillance.market_abuse_alerts
--- Partitioned by: alert_date
--- Clustered by: trader_id, symbol
-
 -- =====================================================
--- QUERY 1: REPEAT OFFENDERS - 90-Day Rolling Risk Score
--- Calculate running risk score for every trader based on
--- total alert count and average OTR over 90-day window
+-- 1. 90-DAY ROLLING WINDOW CALCULATION
+-- Rank the top 10 highest risk traders over rolling 90-day periods
 -- =====================================================
 
-WITH trader_daily_stats AS (
+WITH daily_trader_metrics AS (
   SELECT 
-    trader_id,
     alert_date,
-    COUNT(*) AS daily_alert_count,
-    AVG(order_to_trade_ratio) AS daily_avg_otr,
-    AVG(cancellation_percentage) AS daily_avg_cancellation_pct,
-    AVG(avg_execution_horizon_ms) AS daily_avg_exec_horizon,
-    MAX(alert_severity) AS max_severity_day,
-    COUNT(DISTINCT symbol) AS symbols_targeted
-  FROM 
-    `your-gcp-project-id.surveillance.market_abuse_alerts`
-  WHERE 
-    alert_date BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY) 
-                    AND CURRENT_DATE()
-    AND alert_type = 'SPOOFING_SUSPECTED'
-  GROUP BY 
-    trader_id, alert_date
+    trader_id,
+    symbol,
+    COUNT(*) AS alert_count,
+    COUNTIF(alert_severity = 'CRITICAL') AS critical_alerts,
+    COUNTIF(alert_severity = 'HIGH') AS high_alerts,
+    AVG(order_to_trade_ratio) AS avg_otr,
+    AVG(cancellation_rate) AS avg_cancel_rate,
+    AVG(avg_execution_horizon_ms) AS avg_exec_horizon,
+    SUM(CASE WHEN alert_type = 'SPOOFING' THEN 1 ELSE 0 END) AS spoofing_alerts,
+    SUM(CASE WHEN alert_type = 'LAYERING' THEN 1 ELSE 0 END) AS layering_alerts
+  FROM `your-gcp-project-id.surveillance.market_abuse_alerts`
+  WHERE alert_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+  GROUP BY alert_date, trader_id, symbol
 ),
 
-trader_90day_rolling AS (
+rolling_90day AS (
   SELECT 
     trader_id,
-    alert_date,
-    daily_alert_count,
-    daily_avg_otr,
-    daily_avg_cancellation_pct,
-    daily_avg_exec_horizon,
-    symbols_targeted,
-    SUM(daily_alert_count) OVER (
-      PARTITION BY trader_id 
+    symbol,
+    SUM(alert_count) OVER (
+      PARTITION BY trader_id, symbol 
       ORDER BY alert_date 
-      ROWS BETWEEN 89 PRECEDING AND CURRENT ROW
-    ) AS rolling_90d_alert_count,
-    AVG(daily_avg_otr) OVER (
-      PARTITION BY trader_id 
+      RANGE BETWEEN INTERVAL 89 DAY PRECEDING AND CURRENT ROW
+    ) AS rolling_90day_alerts,
+    SUM(critical_alerts) OVER (
+      PARTITION BY trader_id, symbol 
       ORDER BY alert_date 
-      ROWS BETWEEN 89 PRECEDING AND CURRENT ROW
-    ) AS rolling_90d_avg_otr,
-    AVG(daily_avg_cancellation_pct) OVER (
-      PARTITION BY trader_id 
+      RANGE BETWEEN INTERVAL 89 DAY PRECEDING AND CURRENT ROW
+    ) AS rolling_90day_critical,
+    AVG(avg_otr) OVER (
+      PARTITION BY trader_id, symbol 
       ORDER BY alert_date 
-      ROWS BETWEEN 89 PRECEDING AND CURRENT ROW
-    ) AS rolling_90d_avg_cancellation_pct,
-    AVG(daily_avg_exec_horizon) OVER (
-      PARTITION BY trader_id 
+      RANGE BETWEEN INTERVAL 89 DAY PRECEDING AND CURRENT ROW
+    ) AS rolling_90day_avg_otr,
+    AVG(avg_cancel_rate) OVER (
+      PARTITION BY trader_id, symbol 
       ORDER BY alert_date 
-      ROWS BETWEEN 89 PRECEDING AND CURRENT ROW
-    ) AS rolling_90d_avg_exec_horizon,
+      RANGE BETWEEN INTERVAL 89 DAY PRECEDING AND CURRENT ROW
+    ) AS rolling_90day_avg_cancel_rate,
+    COUNT(DISTINCT alert_date) OVER (
+      PARTITION BY trader_id, symbol 
+      ORDER BY alert_date 
+      RANGE BETWEEN INTERVAL 89 DAY PRECEDING AND CURRENT ROW
+    ) AS active_days_90day,
     ROW_NUMBER() OVER (
-      PARTITION BY trader_id 
-      ORDER BY alert_date
-    ) AS days_observed
-  FROM trader_daily_stats
+      PARTITION BY trader_id, symbol 
+      ORDER BY alert_date DESC
+    ) AS rn
+  FROM daily_trader_metrics
 ),
 
-repeat_offenders_risk AS (
+risk_scoring AS (
   SELECT 
     trader_id,
-    alert_date,
-    rolling_90d_alert_count AS total_alerts_90d,
-    ROUND(rolling_90d_avg_otr, 3) AS avg_otr_90d,
-    ROUND(rolling_90d_avg_cancellation_pct, 2) AS avg_cancellation_pct_90d,
-    ROUND(rolling_90d_avg_exec_horizon, 2) AS avg_exec_horizon_ms_90d,
-    days_observed,
-    ROUND(
-      (rolling_90d_alert_count * 2.5) + 
-      (rolling_90d_avg_otr * 1.8) + 
-      (rolling_90d_avg_cancellation_pct * 0.3),
-      2
-    ) AS running_risk_score,
-    CASE 
-      WHEN (rolling_90d_alert_count * 2.5 + rolling_90d_avg_otr * 1.8 + rolling_90d_avg_cancellation_pct * 0.3) >= 200 THEN 'CRITICAL'
-      WHEN (rolling_90d_alert_count * 2.5 + rolling_90d_avg_otr * 1.8 + rolling_90d_avg_cancellation_pct * 0.3) >= 150 THEN 'HIGH'
-      WHEN (rolling_90d_alert_count * 2.5 + rolling_90d_avg_otr * 1.8 + rolling_90d_avg_cancellation_pct * 0.3) >= 100 THEN 'MEDIUM'
-      WHEN (rolling_90d_alert_count * 2.5 + rolling_90d_avg_otr * 1.8 + rolling_90d_avg_cancellation_pct * 0.3) >= 50 THEN 'LOW'
-      ELSE 'MINIMAL'
-    END AS risk_category
-  FROM trader_90day_rolling
-  WHERE days_observed >= 1
+    symbol,
+    rolling_90day_alerts,
+    rolling_90day_critical,
+    rolling_90day_avg_otr,
+    rolling_90day_avg_cancel_rate,
+    active_days_90day,
+    -- Risk score calculation
+    (rolling_90day_alerts * 10) + 
+    (rolling_90day_critical * 25) + 
+    (COALESCE(rolling_90day_avg_otr, 0) * 2) + 
+    (COALESCE(rolling_90day_avg_cancel_rate, 0) * 100) AS risk_score
+  FROM rolling_90day
+  WHERE rn = 1 AND rolling_90day_alerts > 0
 )
 
+-- TOP 10 HIGHEST RISK TRADERS (90-DAY ROLLING)
 SELECT 
   trader_id,
-  alert_date,
-  total_alerts_90d,
-  avg_otr_90d,
-  avg_cancellation_pct_90d,
-  avg_exec_horizon_ms_90d,
-  running_risk_score,
-  risk_category,
-  CASE 
-    WHEN total_alerts_90d >= 10 AND running_risk_score >= 150 THEN TRUE 
-    ELSE FALSE 
-  END AS is_repeat_offender
-FROM repeat_offenders_risk
-WHERE alert_date = CURRENT_DATE()
-ORDER BY running_risk_score DESC, total_alerts_90d DESC;
+  symbol,
+  rolling_90day_alerts AS alerts_90d,
+  rolling_90day_critical AS critical_alerts_90d,
+  ROUND(rolling_90day_avg_otr, 2) AS avg_otr_90d,
+  ROUND(rolling_90day_avg_cancel_rate * 100, 2) AS avg_cancel_rate_pct_90d,
+  active_days_90day,
+  ROUND(risk_score, 2) AS composite_risk_score,
+  RANK() OVER (ORDER BY risk_score DESC) AS risk_rank
+FROM risk_scoring
+ORDER BY risk_score DESC
+LIMIT 10;
 
 
 -- =====================================================
--- QUERY 2: TICKER TARGETING ANALYSIS
--- Partition alerts by stock symbol to identify which
--- specific tickers are being targeted by manipulative algorithms
+-- 2. SYMBOL-BASED ANALYTIC PARTITIONING
+-- Identify which tickers are experiencing highest concentration of market manipulation alerts
 -- =====================================================
 
-WITH symbol_daily_metrics AS (
+WITH symbol_alert_summary AS (
   SELECT 
     symbol,
     alert_date,
-    COUNT(*) AS alert_count,
-    COUNT(DISTINCT trader_id) AS unique_traders,
-    AVG(order_to_trade_ratio) AS avg_otr,
-    AVG(cancellation_percentage) AS avg_cancellation_pct,
-    AVG(avg_execution_horizon_ms) AS avg_exec_horizon,
-    SUM(new_order_count) AS total_new_orders,
-    SUM(fill_count) AS total_fills,
-    SUM(cancel_count) AS total_cancels
-  FROM 
-    `your-gcp-project-id.surveillance.market_abuse_alerts`
-  WHERE 
-    alert_date BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY) 
-                    AND CURRENT_DATE()
-    AND alert_type = 'SPOOFING_SUSPECTED'
-  GROUP BY 
-    symbol, alert_date
+    alert_type,
+    trader_id,
+    alert_severity,
+    order_to_trade_ratio,
+    cancellation_rate
+  FROM `your-gcp-project-id.surveillance.market_abuse_alerts`
+  WHERE alert_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
 ),
 
-symbol_partitioned_analysis AS (
+symbol_partitioned AS (
   SELECT 
     symbol,
     alert_date,
-    alert_count,
-    unique_traders,
-    ROUND(avg_otr, 3) AS avg_otr,
-    ROUND(avg_cancellation_pct, 2) AS avg_cancellation_pct,
-    ROUND(avg_exec_horizon, 2) AS avg_exec_horizon,
-    total_new_orders,
-    total_fills,
-    total_cancels,
-    RANK() OVER (
+    COUNT(*) AS daily_alerts,
+    COUNT(DISTINCT trader_id) AS unique_traders,
+    COUNTIF(alert_severity = 'CRITICAL') AS daily_critical,
+    COUNTIF(alert_type = 'SPOOFING') AS daily_spoofing,
+    COUNTIF(alert_type = 'LAYERING') AS daily_layering,
+    AVG(order_to_trade_ratio) AS avg_otr,
+    AVG(cancellation_rate) AS avg_cancel_rate,
+    -- Analytic functions partitioned by symbol
+    SUM(COUNT(*)) OVER (
       PARTITION BY symbol 
-      ORDER BY alert_count DESC, avg_otr DESC
-    ) AS daily_rank_in_symbol,
-    DENSE_RANK() OVER (
-      ORDER BY alert_count DESC
-    ) AS overall_rank,
-    SUM(alert_count) OVER (
+      ORDER BY alert_date 
+      RANGE BETWEEN INTERVAL 29 DAY PRECEDING AND CURRENT ROW
+    ) AS rolling_30day_alerts_by_symbol,
+    AVG(COUNT(*)) OVER (
       PARTITION BY symbol 
       ORDER BY alert_date 
       ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
-    ) AS rolling_7d_alerts,
-    AVG(alert_count) OVER (
+    ) AS ma7_daily_alerts,
+    SUM(COUNT(DISTINCT trader_id)) OVER (
       PARTITION BY symbol 
       ORDER BY alert_date 
-      ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
-    ) AS rolling_7d_avg_alerts,
-    SUM(alert_count) OVER (
-      PARTITION BY symbol 
-      ORDER BY alert_date 
-      ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
-    ) AS rolling_30d_alerts,
-    SUM(alert_count) OVER (
-      PARTITION BY symbol 
-      ORDER BY alert_date 
-      ROWS BETWEEN 89 PRECEDING AND CURRENT ROW
-    ) AS rolling_90d_total,
-    ROUND(alert_count * 100.0 / SUM(alert_count) OVER (
-      PARTITION BY alert_date
-    ), 2) AS pct_of_daily_alerts,
-    ROUND(unique_traders * 100.0 / SUM(unique_traders) OVER (
-      PARTITION BY alert_date
-    ), 2) AS pct_of_daily_traders
-  FROM symbol_daily_metrics
+      RANGE BETWEEN INTERVAL 29 DAY PRECEDING AND CURRENT ROW
+    ) AS rolling_30day_unique_traders,
+    ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY alert_date DESC) AS rn
+  FROM symbol_alert_summary
+  GROUP BY symbol, alert_date
 )
 
+-- TOP TICKERS BY MANIPULATION CONCENTRATION (30-DAY ROLLING)
 SELECT 
   symbol,
-  alert_count AS alerts_today,
-  unique_traders AS traders_today,
-  avg_otr,
-  avg_cancellation_pct,
-  rolling_7d_alerts,
-  rolling_30d_alerts,
-  rolling_90d_total AS total_alerts_90d,
-  ROUND((rolling_90d_total * 3.0) + (unique_traders * 2.0) + (avg_otr * 1.5), 2) AS targeting_intensity_score,
-  CASE 
-    WHEN rolling_90d_total >= 100 AND avg_otr >= 10 THEN 'HEAVILY_TARGETED'
-    WHEN rolling_90d_total >= 50 AND avg_otr >= 7 THEN 'MODERATELY_TARGETED'
-    WHEN rolling_90d_total >= 20 AND avg_otr >= 5 THEN 'TARGETED'
-    ELSE 'LIGHTLY_TARGETED'
-  END AS targeting_classification,
-  pct_of_daily_alerts,
-  pct_of_daily_traders
-FROM symbol_partitioned_analysis
-WHERE alert_date = CURRENT_DATE()
-ORDER BY targeting_intensity_score DESC, total_alerts_90d DESC;
+  rolling_30day_alerts_by_symbol AS alerts_30d,
+  rolling_30day_unique_traders AS unique_traders_30d,
+  ROUND(rolling_30day_alerts_by_symbol / NULLIF(rolling_30day_unique_traders, 0), 2) AS alerts_per_trader,
+  SUM(daily_critical) OVER (PARTITION BY symbol ORDER BY alert_date DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS total_critical_30d,
+  ROUND(ma7_daily_alerts, 2) AS ma7_alerts,
+  RANK() OVER (ORDER BY rolling_30day_alerts_by_symbol DESC) AS concentration_rank
+FROM symbol_partitioned
+WHERE rn = 1
+ORDER BY rolling_30day_alerts_by_symbol DESC
+LIMIT 15;
 
 
 -- =====================================================
--- QUERY 3: WEEKLY VELOCITY - Week-over-Week Alert Frequency
--- Use LAG() function to calculate weekly velocity
--- Flag traders whose spoofing alert frequency increased by >50% week-over-week
+-- 3. WEEKLY ALERT VELOCITY ANALYSIS WITH LAG/LEAD DELTA
+-- Isolate individuals whose weekly alert velocity has expanded by over 50%
 -- =====================================================
 
 WITH weekly_trader_stats AS (
   SELECT 
     trader_id,
     DATE_TRUNC(alert_date, WEEK(MONDAY)) AS week_start,
-    COUNT(*) AS weekly_alert_count,
-    COUNT(DISTINCT symbol) AS weekly_symbols_targeted,
-    AVG(order_to_trade_ratio) AS weekly_avg_otr,
-    AVG(cancellation_percentage) AS weekly_avg_cancellation_pct,
-    AVG(avg_execution_horizon_ms) AS weekly_avg_exec_horizon
-  FROM 
-    `your-gcp-project-id.surveillance.market_abuse_alerts`
-  WHERE 
-    alert_date BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY) 
-                    AND CURRENT_DATE()
-    AND alert_type = 'SPOOFING_SUSPECTED'
-  GROUP BY 
-    trader_id, week_start
+    symbol,
+    COUNT(*) AS weekly_alerts,
+    COUNTIF(alert_severity = 'CRITICAL') AS weekly_critical,
+    COUNTIF(alert_type = 'SPOOFING') AS weekly_spoofing,
+    AVG(order_to_trade_ratio) AS avg_otr_week,
+    AVG(cancellation_rate) AS avg_cancel_week
+  FROM `your-gcp-project-id.surveillance.market_abuse_alerts`
+  WHERE alert_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 12 WEEK)
+  GROUP BY trader_id, week_start, symbol
 ),
 
-weekly_velocity AS (
+velocity_calculation AS (
   SELECT 
     trader_id,
+    symbol,
     week_start,
-    weekly_alert_count,
-    weekly_symbols_targeted,
-    weekly_avg_otr,
-    weekly_avg_cancellation_pct,
-    weekly_avg_exec_horizon,
-    LAG(weekly_alert_count, 1) OVER (
-      PARTITION BY trader_id 
+    weekly_alerts,
+    weekly_critical,
+    weekly_spoofing,
+    LAG(weekly_alerts, 1) OVER (
+      PARTITION BY trader_id, symbol 
       ORDER BY week_start
-    ) AS previous_week_alert_count,
-    LAG(weekly_avg_otr, 1) OVER (
-      PARTITION BY trader_id 
+    ) AS prev_week_alerts,
+    LAG(weekly_alerts, 2) OVER (
+      PARTITION BY trader_id, symbol 
       ORDER BY week_start
-    ) AS previous_week_avg_otr
+    ) AS prev_2week_alerts,
+    LEAD(weekly_alerts, 1) OVER (
+      PARTITION BY trader_id, symbol 
+      ORDER BY week_start
+    ) AS next_week_alerts
   FROM weekly_trader_stats
+),
+
+velocity_delta AS (
+  SELECT 
+    trader_id,
+    symbol,
+    week_start,
+    weekly_alerts,
+    prev_week_alerts,
+    -- Calculate week-over-week delta
+    CASE 
+      WHEN prev_week_alerts IS NULL OR prev_week_alerts = 0 THEN NULL
+      ELSE ROUND((weekly_alerts - prev_week_alerts) / prev_week_alerts * 100, 2)
+    END AS wow_velocity_pct,
+    -- Calculate acceleration (change in velocity)
+    CASE 
+      WHEN prev_2week_alerts IS NOT NULL AND prev_week_alerts IS NOT NULL AND prev_2week_alerts > 0 THEN
+        CASE 
+          WHEN (weekly_alerts - prev_week_alerts) / prev_week_alerts > (prev_week_alerts - prev_2week_alerts) / prev_2week_alerts THEN 'ACCELERATING'
+          WHEN (weekly_alerts - prev_week_alerts) / prev_week_alerts < (prev_week_alerts - prev_2week_alerts) / prev_2week_alerts THEN 'DECELERATING'
+          ELSE 'STABLE'
+        END
+      ELSE 'INSUFFICIENT_HISTORY'
+    END AS velocity_trend
+  FROM velocity_calculation
+)
+
+-- TRADERS WITH WEEKLY ALERT VELOCITY EXPANDED BY OVER 50%
+SELECT 
+  trader_id,
+  symbol,
+  week_start,
+  weekly_alerts AS current_week_alerts,
+  prev_week_alerts AS previous_week_alerts,
+  wow_velocity_pct AS week_over_week_change_pct,
+  velocity_trend,
+  CASE 
+    WHEN wow_velocity_pct > 50 THEN 'CRITICAL_ESCALATION'
+    WHEN wow_velocity_pct > 25 THEN 'HIGH_ESCALATION'
+    WHEN wow_velocity_pct > 0 THEN 'MODERATE_INCREASE'
+    ELSE 'OTHER'
+  END AS escalation_level
+FROM velocity_delta
+WHERE wow_velocity_pct > 50
+  AND week_start >= DATE_SUB(DATE_TRUNC(CURRENT_DATE(), WEEK(MONDAY)), INTERVAL 8 WEEK)
+ORDER BY wow_velocity_pct DESC, weekly_alerts DESC;
+
+
+-- =====================================================
+-- 4. COMPREHENSIVE SURVEILLANCE SUMMARY DASHBOARD
+-- =====================================================
+
+WITH summary_metrics AS (
+  SELECT 
+    COUNT(*) AS total_alerts_90d,
+    COUNT(DISTINCT trader_id) AS unique_suspicious_traders,
+    COUNT(DISTINCT symbol) AS affected_symbols,
+    COUNTIF(alert_severity = 'CRITICAL') AS critical_alerts,
+    COUNTIF(alert_type = 'SPOOFING') AS spoofing_cases,
+    COUNTIF(alert_type = 'LAYERING') AS layering_cases,
+    AVG(order_to_trade_ratio) AS overall_avg_otr,
+    AVG(cancellation_rate) AS overall_avg_cancel_rate
+  FROM `your-gcp-project-id.surveillance.market_abuse_alerts`
+  WHERE alert_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
 )
 
 SELECT 
-  trader_id,
-  week_start,
-  weekly_alert_count AS current_week_alerts,
-  previous_week_alert_count AS last_week_alerts,
-  CASE 
-    WHEN previous_week_alert_count IS NULL OR previous_week_alert_count = 0 THEN NULL
-    ELSE (weekly_alert_count - previous_week_alert_count)
-  END AS week_change,
-  CASE 
-    WHEN previous_week_alert_count IS NULL OR previous_week_alert_count = 0 THEN NULL
-    ELSE ROUND(((weekly_alert_count - previous_week_alert_count) * 100.0 / previous_week_alert_count), 2)
-  END AS week_change_pct,
-  CASE 
-    WHEN previous_week_alert_count IS NULL THEN 'NEW_ACTOR'
-    WHEN weekly_alert_count > previous_week_alert_count * 1.5 THEN 'ACCELERATING'
-    WHEN weekly_alert_count > previous_week_alert_count THEN 'INCREASING'
-    WHEN weekly_alert_count < previous_week_alert_count THEN 'DECLINING'
-    ELSE 'STABLE'
-  END AS velocity_trend,
-  weekly_symbols_targeted AS symbols_targeted,
-  ROUND(weekly_avg_otr, 3) AS avg_otr_week,
-  ROUND(weekly_avg_cancellation_pct, 2) AS avg_cancellation_pct_week,
-  ROUND(weekly_avg_exec_horizon, 2) AS avg_exec_horizon_ms_week,
-  CASE 
-    WHEN previous_week_alert_count IS NOT NULL 
-         AND previous_week_alert_count > 0 
-         AND weekly_alert_count > previous_week_alert_count * 1.5 
-    THEN TRUE 
-    ELSE FALSE 
-  END AS flagged_velocity_increase
-FROM weekly_velocity
-WHERE week_start >= DATE_SUB(DATE_TRUNC(CURRENT_DATE(), WEEK(MONDAY)), INTERVAL 12 WEEK)
-  AND (
-    (previous_week_alert_count IS NOT NULL AND previous_week_alert_count > 0 AND weekly_alert_count > previous_week_alert_count * 1.5)
-    OR (previous_week_alert_count IS NULL AND weekly_alert_count >= 5)
-  )
-ORDER BY week_change_pct DESC NULLS LAST, week_start DESC, trader_id;
+  'SURVEILLANCE_SUMMARY_90D' AS report_type,
+  total_alerts_90d,
+  unique_suspicious_traders,
+  affected_symbols,
+  critical_alerts,
+  spoofing_cases,
+  layering_cases,
+  ROUND(overall_avg_otr, 2) AS avg_otr,
+  ROUND(overall_avg_cancel_rate * 100, 2) AS avg_cancel_rate_pct,
+  ROUND(critical_alerts / NULLIF(total_alerts_90d, 0) * 100, 2) AS critical_percentage
+FROM summary_metrics;
