@@ -43,4 +43,4 @@ FROM ordered
 WHERE previous_time IS NOT NULL
   AND event_time - previous_time <= INTERVAL '500 milliseconds'
   AND buyer_ref = seller_ref;
---Demo
+--Demo Checking
