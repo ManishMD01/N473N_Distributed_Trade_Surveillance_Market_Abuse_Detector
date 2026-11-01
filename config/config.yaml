@@ -1,0 +1,120 @@
+# =====================================================
+# Distributed Trade Surveillance & Market Abuse Detector
+# Configuration File
+# =====================================================
+
+# Environment
+environment: development
+log_level: INFO
+
+# Kafka Configuration
+kafka:
+  bootstrap_servers: "localhost:9092"
+  topic: "market-orders"
+  consumer_group: "surveillance-consumer"
+  auto_offset_reset: "latest"
+  security_protocol: "PLAINTEXT"
+
+# Zookeeper Configuration
+zookeeper:
+  connect: "localhost:2181"
+
+# Neo4j Configuration
+neo4j:
+  uri: "bolt://localhost:7687"
+  user: "neo4j"
+  password: "surveillance123"
+  database: "neo4j"
+  max_connection_pool_size: 50
+
+# TimescaleDB / PostgreSQL Configuration
+timescaledb:
+  host: "localhost"
+  port: 5432
+  database: "surveillance"
+  user: "postgres"
+  password: "your_password_here"
+  schema: "public"
+  ssl_mode: "prefer"
+  pool_size: 20
+  # Connection string
+  connection_string: "postgresql://postgres:your_password_here@localhost:5432/surveillance"
+
+# Google BigQuery Configuration
+bigquery:
+  project_id: "your-gcp-project-id"
+  dataset: "surveillance"
+  table_alerts: "market_abuse_alerts"
+  credentials_path: "./gcp-credentials.json"  # Path to service account key
+  location: "US"
+  temporary_gcs_bucket: "your-temporary-gcs-bucket"
+
+# PySpark Configuration
+spark:
+  app_name: "DistributedTradeSurveillancePipeline"
+  master: "local[*]"  # Use "yarn" or "spark://master:7077" for cluster
+  checkpoint_location: "/tmp/surveillance-checkpoint"
+  shuffle_partitions: 200
+  adaptive_enabled: true
+  executor_memory: "2g"
+  driver_memory: "1g"
+  jars_packages:
+    - "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1"
+    - "com.google.cloud.spark:spark-bigquery-with-dependencies_2.12:0.36.1"
+
+# Market Simulator Configuration
+simulator:
+  bootstrap_servers: "localhost:9092"
+  topic: "market-orders"
+  symbols:
+    - "AAPL"
+    - "MSFT"
+    - "GOOGL"
+    - "TSLA"
+    - "AMZN"
+    - "NVDA"
+  num_traders: 50
+  spoof_interval_seconds: 30
+  spoof_trader_id: "TRADER_SPOOF_99"
+  spoof_wait_ms: 800
+
+# Surveillance Detection Rules
+detection:
+  window_duration_seconds: 10
+  window_slide_seconds: 5
+  watermark_seconds: 2
+  rules:
+    spoofing:
+      min_order_to_trade_ratio: 5.0
+      min_cancellation_rate: 0.80  # 80%
+      max_execution_horizon_ms: 2000  # 2 seconds
+    layering:
+      enabled: true
+      depth_threshold: 5
+
+# FastAPI Configuration
+api:
+  host: "0.0.0.0"
+  port: 8000
+  reload: true
+  title: "Trade Surveillance API"
+  version: "0.1.0"
+  cors_origins:
+    - "http://localhost:8080"
+    - "http://localhost:5000"
+
+# GUI Configuration
+gui:
+  flask:
+    host: "0.0.0.0"
+    port: 5000
+    debug: true
+  php:
+    host: "0.0.0.0"
+    port: 8080
+
+# Alert Thresholds
+alerts:
+  risk_score_high: 80
+  risk_score_critical: 90
+  retention_days: 90
