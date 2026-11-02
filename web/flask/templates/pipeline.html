@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}Pipeline - Trade Surveillance{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">Data Pipeline Status</h1>
+</div>
+
+<div class="row">
+    <div class="col-lg-6 mb-4">
+        <div class="card shadow">
+            <div class="card-header py-3">
+                <h6 class="m-0 font-weight-bold text-primary">Components</h6>
+            </div>
+            <div class="card-body">
+                <ul class="list-group">
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        Kafka
+                        <span class="badge bg-success">Running</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        PySpark Streaming
+                        <span class="badge bg-warning">Manual Start</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        Neo4j
+                        <span class="badge bg-success">Running</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        Market Simulator
+                        <span class="badge bg-warning">Manual Start</span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

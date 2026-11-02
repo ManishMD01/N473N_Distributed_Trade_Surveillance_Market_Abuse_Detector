@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Alert Details - Trade Surveillance{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">Alert Details</h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <a href="{{ url_for('dashboard') }}" class="btn btn-sm btn-outline-secondary">
+            <i class="fas fa-arrow-left"></i> Back to Dashboard
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card shadow mb-4">
+            <div class="card-header py-3">
+                <h6 class="m-0 font-weight-bold text-primary">Alert Information</h6>
+            </div>
+            <div class="card-body">
+                <div class="row mb-3">
+                    <div class="col-sm-4"><strong>Alert ID:</strong></div>
+                    <div class="col-sm-8">{{ alert.alert_id }}</div>
+                </div>
+                <div class="row mb-3">
+                    <div class="col-sm-4"><strong>Type:</strong></div>
+                    <div class="col-sm-8">{{ alert.alert_type }}</div>
+                </div>
+                <div class="row mb-3">
+                    <div class="col-sm-4"><strong>Status:</strong></div>
+                    <div class="col-sm-8">{{ alert.status }}</div>
+                </div>
+                <div class="row mb-3">
+                    <div class="col-sm-4"><strong>Severity:</strong></div>
+                    <div class="col-sm-8">{{ alert.severity }}</div>
+                </div>
+                <div class="row mb-3">
+                    <div class="col-sm-4"><strong>Symbol:</strong></div>
+                    <div class="col-sm-8">{{ alert.symbol }}</div>
+                </div>
+                <div class="row mb-3">
+                    <div class="col-sm-4"><strong>Trader:</strong></div>
+                    <div class="col-sm-8">{{ alert.trader_ref }}</div>
+                </div>
+                <div class="row mb-3">
+                    <div class="col-sm-4"><strong>Detected At:</strong></div>
+                    <div class="col-sm-8">{{ alert.detected_at }}</div>
+                </div>
+                <div class="row mb-3">
+                    <div class="col-sm-4"><strong>Risk Score:</strong></div>
+                    <div class="col-sm-8">{{ alert.risk_score }}</div>
+                </div>
+                <div class="row mb-3">
+                    <div class="col-sm-4"><strong>Notional Value:</strong></div>
+                    <div class="col-sm-8">${{ "%.2f"|format(alert.notional_value) }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="card shadow mb-4">
+            <div class="card-header py-3">
+                <h6 class="m-0 font-weight-bold text-primary">Rationale</h6>
+            </div>
+            <div class="card-body">
+                <p>{{ alert.rationale }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

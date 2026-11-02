@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Traders - Trade Surveillance{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">Trader Risk Analysis</h1>
+</div>
+
+<div class="card shadow mb-4">
+    <div class="card-header py-3">
+        <h6 class="m-0 font-weight-bold text-primary">Trader Risk Summary</h6>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-bordered" width="100%" cellspacing="0">
+                <thead>
+                    <tr>
+                        <th>Trader</th>
+                        <th>Alert Count</th>
+                        <th>Confirmed</th>
+                        <th>Total Notional</th>
+                        <th>Max Risk Score</th>
+                        <th>Risk Band</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for trader in traders %}
+                    <tr>
+                        <td>{{ trader.trader_ref }}</td>
+                        <td>{{ trader.alert_count }}</td>
+                        <td>{{ trader.confirmed_count }}</td>
+                        <td>${{ "%.2f"|format(trader.total_notional) }}</td>
+                        <td>{{ trader.max_risk_score }}</td>
+                        <td>{{ trader.risk_band }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" class="text-center">No trader data available</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
