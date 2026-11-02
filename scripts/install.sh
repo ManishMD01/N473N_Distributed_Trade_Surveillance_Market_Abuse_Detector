@@ -50,23 +50,22 @@ create_startup_scripts() {
     log_info "Creating startup scripts..."
     PROJECT_ROOT="/home/ee_2018_mrdhodare/Git/N473N_Distributed_Trade_Surveillance_Market_Abuse_Detector"
     cd "$PROJECT_ROOT"
-    cat > start_all.sh << 'SCRIPT'
+    cat > scripts/start_all.sh << 'SCRIPT'
 #!/bin/bash
-cd /home/ee_2018_mrdhodare/Git/N473N_Distributed_Trade_Surveillance_Market_Abuse_Detector
+cd "$(dirname "$0")/.."
 docker compose -f infra/docker-compose.yml up -d
 sleep 30
 source .venv/bin/activate 2>/dev/null || true
-echo "Ready"
 SCRIPT
-    chmod +x start_all.sh
-    cat > stop_all.sh << 'SCRIPT'
+    chmod +x scripts/start_all.sh
+    cat > scripts/stop_all.sh << 'SCRIPT'
 #!/bin/bash
-cd /home/ee_2018_mrdhodare/Git/N473N_Distributed_Trade_Surveillance_Market_Abuse_Detector
+cd "$(dirname "$0")/.."
 docker compose -f infra/docker-compose.yml down 2>/dev/null || true
 pkill -f "market_simulator|surveillance_pipeline|uvicorn|gui_app" 2>/dev/null || true
-echo "Stopped"
+echo "All services stopped"
 SCRIPT
-    chmod +x stop_all.sh
+    chmod +x scripts/stop_all.sh
     log_success "Scripts created"
 }
 
