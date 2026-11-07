@@ -77,6 +77,11 @@
                                 <i class="fas fa-project-diagram me-2"></i> Graph Analysis
                             </a>
                         </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if request.endpoint == 'api_docs' %}active{% endif %}" href="{{ url_for('api_docs') }}">
+                                <i class="fas fa-code me-2"></i> API
+                            </a>
+                        </li>
                     </ul>
                     <hr class="text-white-50">
                     <div class="text-center">

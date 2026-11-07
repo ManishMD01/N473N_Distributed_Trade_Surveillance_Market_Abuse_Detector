@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}API - Trade Surveillance{% endblock %}
+{% block page_title %}API Endpoints{% endblock %}
+{% block content %}
+<div class="card shadow mb-4">
+  <div class="card-header py-3"><h6 class="m-0 fw-bold text-primary">FastAPI Compliance API</h6></div>
+  <div class="card-body">
+    <p>Privacy-preserving endpoints (server: <code>http://localhost:8000</code>).</p>
+    <table class="table table-bordered">
+      <thead><tr><th>Endpoint</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><a href="http://localhost:8000/docs" target="_blank">GET /docs</a></td><td>OpenAPI / Swagger UI</td></tr>
+        <tr><td><a href="http://localhost:8000/healthz" target="_blank">GET /healthz</a></td><td>Health check</td></tr>
+        <tr><td><code>GET /v1/alerts</code></td><td>List redacted alerts</td></tr>
+        <tr><td><code>GET /v1/alerts/{alert_id}</code></td><td>Alert detail</td></tr>
+        <tr><td><code>GET /v1/risk/daily</code></td><td>Daily trader risk aggregates</td></tr>
+      </tbody>
+    </table>
+    <p class="text-muted small mb-0"><code>/v1/alerts</code> is empty until the pipeline/ingestion writes alerts; subscreens display demo data when the API returns no records.</p>
+  </div>
+</div>
+{% endblock %}

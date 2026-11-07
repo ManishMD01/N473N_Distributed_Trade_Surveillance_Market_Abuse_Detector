@@ -64,55 +64,95 @@ market_stats = {
     "detection_rate": 98.7
 }
 
+
+
+import os
+try:
+    import requests
+except Exception:
+    requests = None
+
+API_BASE = os.getenv('API_BASE_URL', 'http://127.0.0.1:8000')
+
+def _fetch(path):
+    if not requests:
+        return None
+    try:
+        r = requests.get(f"{API_BASE}{path}", timeout=1.5)
+        if r.ok:
+            return r.json()
+    except Exception:
+        return None
+    return None
+
+def get_alerts_data():
+    data = _fetch('/v1/alerts')
+    return data if isinstance(data, list) and data else alerts_data
+
+def get_traders_data():
+    data = _fetch('/v1/risk/daily')
+    return data if isinstance(data, list) and data else traders_data
+
+def get_stats():
+    alerts = get_alerts_data()
+    return {
+        'total_alerts': len(alerts) if alerts else market_stats['total_alerts'],
+        'open_alerts': sum(1 for a in alerts if a.get('status') in ('open','investigating')) if alerts else market_stats['open_alerts'],
+        'critical_alerts': sum(1 for a in alerts if a.get('severity')=='critical') if alerts else market_stats['critical_alerts'],
+        'traders_monitored': market_stats.get('traders_monitored', 156),
+        'orders_processed': market_stats.get('orders_processed', 145000),
+        'detection_rate': market_stats.get('detection_rate', 98.7),
+    }
+
 @app.route('/')
 def dashboard():
-    return render_template('dashboard.html', 
-                         alerts=alerts_data[:5],
-                         traders=traders_data,
-                         stats=market_stats)
+    items=get_alerts_data(); t=get_traders_data(); return render_template('dashboard.html', alerts=items[:5], traders=t, stats=get_stats())
 
 @app.route('/alerts')
 def alerts():
     status_filter = request.args.get('status')
     type_filter = request.args.get('type')
     symbol_filter = request.args.get('symbol')
-    
-    filtered = alerts_data
+    items = get_alerts_data()
+    filtered = items
     if status_filter:
-        filtered = [a for a in filtered if a['status'] == status_filter]
+        filtered = [a for a in filtered if a.get('status') == status_filter]
     if type_filter:
-        filtered = [a for a in filtered if a['alert_type'] == type_filter]
+        filtered = [a for a in filtered if a.get('alert_type') == type_filter]
     if symbol_filter:
-        filtered = [a for a in filtered if a['symbol'] == symbol_filter]
-    
+        filtered = [a for a in filtered if a.get('symbol') == symbol_filter]
     return render_template('alerts.html', alerts=filtered)
 
 @app.route('/alerts/<alert_id>')
 def alert_detail(alert_id):
-    alert = next((a for a in alerts_data if a['alert_id'] == alert_id), None)
+    alert = next((a for a in get_alerts_data() if a.get('alert_id') == alert_id), None)
     if not alert:
         return redirect(url_for('alerts'))
     return render_template('alert_detail.html', alert=alert)
 
 @app.route('/traders')
 def traders():
-    return render_template('traders.html', traders=traders_data)
+    return render_template('traders.html', traders=get_traders_data())
 
 @app.route('/pipeline')
 def pipeline():
-    return render_template('pipeline.html')
+    return render_template('pipeline.html', stats=get_stats())
 
 @app.route('/graph')
 def graph():
     return render_template('graph.html')
 
+@app.route('/api-docs')
+def api_docs():
+    return render_template('api.html')
+
 @app.route('/api/alerts')
 def api_alerts():
-    return jsonify(alerts_data)
+    return jsonify(get_alerts_data())
 
 @app.route('/api/stats')
 def api_stats():
-    return jsonify(market_stats)
+    return jsonify(get_stats())
 
 @app.route('/api/stream')
 def api_stream():
