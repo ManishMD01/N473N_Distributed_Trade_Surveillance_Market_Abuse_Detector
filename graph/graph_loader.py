@@ -172,62 +172,58 @@ class GraphLoader:
         """
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Detecting collusive spoofing networks...")
         
-        query = """
-        // Find traders involved in high-risk spoofing through same IP
-        MATCH (t1:Trader)-[:OPERATES_FROM]->(ip:IPAddress)<-[:OPERATES_FROM]-(t2:Trader)
-        WHERE t1.trader_id < t2.trader_id
-        MATCH (t1)-[:TRIGGERED]->(al1:Alert)
-        MATCH (t2)-[:TRIGGERED]->(al2:Alert)
-        WHERE al1.alert_type = 'SPOOFING' AND al1.severity IN ['HIGH', 'CRITICAL']
-          AND al2.alert_type = 'SPOOFING' AND al2.severity IN ['HIGH', 'CRITICAL']
-          AND al1.symbol = al2.symbol
-        WITH ip, t1, t2, collect(DISTINCT al1.alert_id) as alerts1, collect(DISTINCT al2.alert_id) as alerts2
-        RETURN 
-            ip.ip_address as shared_ip,
-            t1.trader_id as trader1,
-            t2.trader_id as trader2,
-            size(alerts1) as trader1_spoof_alerts,
-            size(alerts2) as trader2_spoof_alerts,
-            alerts1 + alerts2 as all_alerts,
-            'COLLUSION_VIA_IP' as collusion_type
-        ORDER BY size(alerts1) + size(alerts2) DESC
-        
-        UNION
-        
-        // Find traders involved in high-risk spoofing through same Account
-        MATCH (t1:Trader)-[:USES_ACCOUNT]->(a:Account)<-[:USES_ACCOUNT]-(t2:Trader)
-        WHERE t1.trader_id < t2.trader_id
-        MATCH (t1)-[:TRIGGERED]->(al1:Alert)
-        MATCH (t2)-[:TRIGGERED]->(al2:Alert)
-        WHERE al1.alert_type = 'SPOOFING' AND al1.severity IN ['HIGH', 'CRITICAL']
-          AND al2.alert_type = 'SPOOFING' AND al2.severity IN ['HIGH', 'CRITICAL']
-          AND al1.symbol = al2.symbol
-        WITH a, t1, t2, collect(DISTINCT al1.alert_id) as alerts1, collect(DISTINCT al2.alert_id) as alerts2
-        RETURN 
-            a.account_id as shared_account,
-            t1.trader_id as trader1,
-            t2.trader_id as trader2,
-            size(alerts1) as trader1_spoof_alerts,
-            size(alerts2) as trader2_spoof_alerts,
-            alerts1 + alerts2 as all_alerts,
-            'COLLUSION_VIA_ACCOUNT' as collusion_type
-        ORDER BY size(alerts1) + size(alerts2) DESC
-        """
-        
         with self.driver.session() as session:
-            result = session.run(query)
-            records = list(result)
+            q_ip = """
+            MATCH (t1:Trader)-[:OPERATES_FROM]->(ip:IPAddress)<-[:OPERATES_FROM]-(t2:Trader)
+            WHERE t1.trader_id < t2.trader_id
+            MATCH (t1)-[:TRIGGERED]->(al1:Alert)
+            MATCH (t2)-[:TRIGGERED]->(al2:Alert)
+            WHERE al1.alert_type = 'SPOOFING' AND al1.severity IN ['HIGH', 'CRITICAL']
+              AND al2.alert_type = 'SPOOFING' AND al2.severity IN ['HIGH', 'CRITICAL']
+              AND al1.symbol = al2.symbol
+            WITH ip, t1, t2, collect(DISTINCT al1.alert_id) as alerts1, collect(DISTINCT al2.alert_id) as alerts2
+            RETURN
+                ip.ip_address as shared_entity,
+                t1.trader_id as trader1,
+                t2.trader_id as trader2,
+                size(alerts1) as trader1_spoof_alerts,
+                size(alerts2) as trader2_spoof_alerts,
+                alerts1 + alerts2 as all_alerts,
+                'COLLUSION_VIA_IP' as collusion_type
+            ORDER BY size(alerts1) + size(alerts2) DESC
+            """
+            q_acct = """
+            MATCH (t1:Trader)-[:USES_ACCOUNT]->(a:Account)<-[:USES_ACCOUNT]-(t2:Trader)
+            WHERE t1.trader_id < t2.trader_id
+            MATCH (t1)-[:TRIGGERED]->(al1:Alert)
+            MATCH (t2)-[:TRIGGERED]->(al2:Alert)
+            WHERE al1.alert_type = 'SPOOFING' AND al1.severity IN ['HIGH', 'CRITICAL']
+              AND al2.alert_type = 'SPOOFING' AND al2.severity IN ['HIGH', 'CRITICAL']
+              AND al1.symbol = al2.symbol
+            WITH a, t1, t2, collect(DISTINCT al1.alert_id) as alerts1, collect(DISTINCT al2.alert_id) as alerts2
+            RETURN
+                a.account_id as shared_entity,
+                t1.trader_id as trader1,
+                t2.trader_id as trader2,
+                size(alerts1) as trader1_spoof_alerts,
+                size(alerts2) as trader2_spoof_alerts,
+                alerts1 + alerts2 as all_alerts,
+                'COLLUSION_VIA_ACCOUNT' as collusion_type
+            ORDER BY size(alerts1) + size(alerts2) DESC
+            """
+            records = list(session.run(q_ip)) + list(session.run(q_acct))
+
             
             if not records:
                 print("  ✓ No collusive spoofing patterns detected")
             else:
                 print(f"  🚨 DETECTED {len(records)} potential collusion patterns:")
                 for i, record in enumerate(records, 1):
-                    if record['collusion_type'] == 'COLLUSION_VIA_IP':
-                        print(f"    {i}. IP {record['shared_ip']}: {record['trader1']} <-> {record['trader2']} "
+                    if record.get('collusion_type') == 'COLLUSION_VIA_IP':
+                        print(f"    {i}. IP {record.get('shared_entity')}: {record['trader1']} <-> {record['trader2']} "
                               f"({record['trader1_spoof_alerts']} + {record['trader2_spoof_alerts']} spoof alerts)")
                     else:
-                        print(f"    {i}. Account {record['shared_account']}: {record['trader1']} <-> {record['trader2']} "
+                        print(f"    {i}. Account {record.get('shared_entity')}: {record['trader1']} <-> {record['trader2']} "
                               f"({record['trader1_spoof_alerts']} + {record['trader2_spoof_alerts']} spoof alerts)")
             print()
             return records
