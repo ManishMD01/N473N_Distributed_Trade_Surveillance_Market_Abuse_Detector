@@ -117,15 +117,14 @@ class SurveillancePipeline:
         return parsed_df
     
     def compute_surveillance_metrics(self, parsed_df):
-        """
-        Compute stateful metrics with 10-second sliding window and 2-second watermark.
-        Grouped by window, trader_id, and symbol.
-        """
+        """Compute stateful windowed metrics (durations from config/config.yaml detection.*)."""
         # Apply watermark and sliding window
         windowed_df = parsed_df \
-            .withWatermark("event_timestamp", "2 seconds") \
+            .withWatermark("event_timestamp", f"{int(self.detection.get('watermark_seconds',2))} seconds") \
             .groupBy(
-                window(col("event_timestamp"), "10 seconds", "5 seconds"),  # 10-sec window, sliding
+                window(col("event_timestamp"),
+                       f"{int(self.detection.get('window_duration_seconds',10))} seconds",
+                       f"{int(self.detection.get('window_slide_seconds',5))} seconds"),
                 col("trader_id"),
                 col("symbol")
             )
@@ -219,9 +218,11 @@ class SurveillancePipeline:
         
         # Apply same windowing
         horizon_windowed = order_pairs \
-            .withWatermark("cancel_timestamp", "2 seconds") \
+            .withWatermark("cancel_timestamp", f"{int(self.detection.get('watermark_seconds',2))} seconds") \
             .groupBy(
-                window(col("cancel_timestamp"), "10 seconds", "5 seconds"),
+                window(col("cancel_timestamp"),
+                       f"{int(self.detection.get('window_duration_seconds',10))} seconds",
+                       f"{int(self.detection.get('window_slide_seconds',5))} seconds"),
                 col("trader_id"),
                 col("symbol")
             ) \
@@ -233,54 +234,60 @@ class SurveillancePipeline:
         return horizon_windowed
     
     def flag_alerts(self, final_metrics_df):
-        """
-        Flag alert records if trader's window exceeds:
-        - OTR > 5
-        - Cancellation Rate > 80%
-        - Execution Horizon < 2000ms
-        """
-        alerts_df = final_metrics_df \
-            .filter(
-                (col("order_to_trade_ratio") > 5.0) &
-                (col("cancellation_rate") > 0.80) &
-                (col("avg_execution_horizon_ms") < 2000.0)
-            ) \
-            .select(
-                # Alert metadata
+        """Flag alerts using config/config.yaml -> detection.rules.spoofing (or DETECTION_* env overrides)."""
+        sp = ((self.detection.get('rules') or {}).get('spoofing') or {})
+        if not sp.get('enabled', True):
+            return final_metrics_df.limit(0).select(
                 current_timestamp().alias("alert_timestamp"),
                 to_date(current_timestamp()).alias("alert_date"),
-                
-                # Window information
                 col("window.start").alias("window_start"),
                 col("window.end").alias("window_end"),
-                
-                # Trader and symbol
+                col("trader_id"), col("symbol"),
+                col("order_to_trade_ratio"), col("cancellation_rate"), col("avg_execution_horizon_ms"),
+                col("new_order_count"), col("fill_count"), col("cancel_count"), col("total_orders"),
+                lit(sp.get("alert_type","SPOOFING")).alias("alert_type"),
+                lit("MEDIUM").alias("alert_severity"),
+                lit("L3_ORDER_BOOK_ANALYSIS").alias("detection_method"),
+                lit("detection disabled by config").alias("alert_description"),
+            )
+        otr = float(sp.get('min_order_to_trade_ratio', 5.0))
+        cr = float(sp.get('min_cancellation_rate', 0.80))
+        eh = float(sp.get('max_execution_horizon_ms', 2000.0))
+        atype = sp.get('alert_type', 'SPOOFING')
+        sev = sp.get('severity', 'HIGH')
+        rule = f"OTR>{otr:g} & CancelRate>{cr*100:g}% & ExecHorizon<{eh:g}ms"
+        alerts_df = final_metrics_df \
+            .filter(
+                (col("order_to_trade_ratio") > lit(otr)) &
+                (col("cancellation_rate") > lit(cr)) &
+                (col("avg_execution_horizon_ms") < lit(eh))
+            ) \
+            .select(
+                current_timestamp().alias("alert_timestamp"),
+                to_date(current_timestamp()).alias("alert_date"),
+                col("window.start").alias("window_start"),
+                col("window.end").alias("window_end"),
                 col("trader_id"),
                 col("symbol"),
-                
-                # Computed metrics
                 col("order_to_trade_ratio"),
                 col("cancellation_rate"),
                 col("avg_execution_horizon_ms"),
-                
-                # Supporting metrics
                 col("new_order_count"),
                 col("fill_count"),
                 col("cancel_count"),
                 col("total_orders"),
-                
-                # Alert classification
-                lit("SPOOFING").alias("alert_type"),
-                lit("HIGH").alias("alert_severity"),
-                lit("L3_ORDER_BOOK_ANALYSIS").alias("detection_method"),
-                
-                # Additional context
-                format_string("OTR:%.2f, CancelRate:%.2f%%, ExecHorizon:%dms",
+                lit(atype).alias("alert_type"),
+                when((col("order_to_trade_ratio") > lit(otr * 2)) |
+                     (col("cancellation_rate") > lit(min(cr + 0.10, 0.99))), lit("CRITICAL"))
+                .when((col("order_to_trade_ratio") > lit(otr * 1.4)) |
+                      (col("cancellation_rate") > lit(min(cr + 0.05, 0.99))), lit("HIGH"))
+                .otherwise(lit(sev)).alias("alert_severity"),
+                lit(rule).alias("detection_method"),
+                format_string(f"OTR:%.2f, CancelRate:%.2f%%, ExecHorizon:%dms (rule: {rule})",
                              col("order_to_trade_ratio"),
                              col("cancellation_rate") * 100.0,
                              col("avg_execution_horizon_ms").cast("long")).alias("alert_description")
             )
-        
         return alerts_df
     
     def get_bigquery_ddl(self) -> str:
@@ -362,11 +369,12 @@ OPTIONS(
             parsed_df = self.read_from_kafka()
             
             # Compute surveillance metrics
-            print("[2/4] Computing stateful metrics (10s sliding window, 2s watermark)...")
+            print(f"[2/4] Computing stateful metrics ({self.detection.get('window_duration_seconds',10)}s sliding/{self.detection.get('window_slide_seconds',5)}s, {self.detection.get('watermark_seconds',2)}s watermark)...")
             metrics_df = self.compute_surveillance_metrics(parsed_df)
             
             # Flag alerts
-            print("[3/4] Flagging alerts (OTR>5, CancelRate>80%, ExecHorizon<2000ms)...")
+            sp=((self.detection.get('rules') or {}).get('spoofing') or {})
+            print(f"[3/4] Flagging alerts (OTR>{sp.get('min_order_to_trade_ratio',5)}, CancelRate>{sp.get('min_cancellation_rate',0.8)}, ExecHorizon<{sp.get('max_execution_horizon_ms',2000)}ms)...")
             alerts_df = self.flag_alerts(metrics_df)
             
             # Write to BigQuery

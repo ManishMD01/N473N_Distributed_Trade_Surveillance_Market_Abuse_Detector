@@ -234,12 +234,33 @@ Auto-configured via Docker (`infra/docker-compose.yml`). Direct: http://localhos
 ### Kafka
 Auto-configured via Docker. Topic `market-orders` is auto-created.
 
-## Detection Logic
+## Detection Logic (Configurable)
 
-Alerts triggered when:
-- **Order-to-Trade Ratio (OTR)** > 5
-- **Cancellation Rate** > 80%
-- **Execution Horizon** < 2000ms
+Detection thresholds are configured in `config/config.yaml` under `detection:` (and read by `streaming/surveillance_pipeline.py` via `config/detection_config.py`).
+
+**Default spoofing rule** (`detection.rules.spoofing`):
+- **Order-to-Trade Ratio (OTR)** > `min_order_to_trade_ratio` (default **5.0**)
+- **Cancellation Rate** > `min_cancellation_rate` (default **0.80** = 80%)
+- **Execution Horizon** < `max_execution_horizon_ms` (default **2000** ms)
+
+```yaml
+detection:
+  window_duration_seconds: 10
+  window_slide_seconds: 5
+  watermark_seconds: 2
+  rules:
+    spoofing:
+      enabled: true
+      min_order_to_trade_ratio: 5.0
+      min_cancellation_rate: 0.80
+      max_execution_horizon_ms: 2000
+```
+
+**Quick runtime overrides (no YAML edit):**
+```bash
+DETECTION_OTR_MIN=8 DETECTION_CANCEL_RATE_MIN=0.9 DETECTION_EXEC_HORIZON_MAX_MS=1500 \
+spark-submit streaming/surveillance_pipeline.py
+```
 
 ## Testing
 
