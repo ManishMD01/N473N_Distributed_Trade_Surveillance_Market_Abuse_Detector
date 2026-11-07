@@ -67,6 +67,7 @@ market_stats = {
 
 
 import os
+import base64
 try:
     import requests
 except Exception:
@@ -140,7 +141,28 @@ def pipeline():
 
 @app.route('/graph')
 def graph():
-    return render_template('graph.html')
+    return render_template('graph.html', neo4j_preview='http://localhost:7475/browser/')
+
+@app.route('/graph/console')
+def graph_console():
+    return render_template('graph_console.html')
+
+@app.route('/graph/query', methods=['POST'])
+def graph_query():
+    try:
+        payload = request.get_json(force=True) or {}
+        query = (payload.get('query') or '').strip()
+        if not query:
+            return jsonify({'error': 'query required'}), 400
+        neo4j_http = os.getenv('NEO4J_HTTP_URL', 'http://127.0.0.1:7474')
+        auth = (os.getenv('NEO4J_USER', 'neo4j'), os.getenv('NEO4J_PASSWORD', 'surveillance123'))
+        import requests as rq
+        r = rq.post(f"{neo4j_http}/db/neo4j/tx/commit",
+                    json={"statements":[{"statement": query, "resultDataContents":["row","graph"]}]},
+                    auth=auth, timeout=15)
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api-docs')
 def api_docs():

@@ -269,6 +269,10 @@ source .venv/bin/activate
 pytest
 ```
 
+## Contributing
+
+Contributions are welcome. **Kilo AI agent** was used to help develop and document parts of this project (scripts, configuration guidance, troubleshooting, and documentation updates). Please review changes, run tests, and avoid committing secrets (credentials, keys, tokens).
+
 ## Notes
 - TimescaleDB is not containerized - setup manually (`scripts/setup_timescaledb.sh` / `db/schema.sql`).
 - BigQuery requires GCP project/service account credentials; optional for local UI/demo flow.

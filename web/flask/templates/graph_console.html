@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Graph Console - Trade Surveillance{% endblock %}
+{% block page_title %}Neo4j Graph Console (HTTP){% endblock %}
+{% block content %}
+<div class="alert alert-info">
+  Neo4j Browser’s Bolt connection (<code>:7687</code>) is not available through Cloud Shell Web Preview (HTTP proxy). This console uses Neo4j’s HTTP transactional API on <code>:7474</code> and works in forwarded previews.
+</div>
+<div class="card shadow mb-3">
+  <div class="card-body">
+    <label class="form-label fw-semibold">Cypher</label>
+    <textarea id="cy" class="form-control font-monospace" rows="6">MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 25;</textarea>
+    <div class="mt-2 d-flex gap-2 flex-wrap">
+      <button class="btn btn-primary" onclick="runQ()">Run</button>
+      <button class="btn btn-outline-secondary btn-sm" onclick="setQ('MATCH (n) RETURN labels(n)[0] AS label, count(*) AS count ORDER BY count DESC')">Counts</button>
+      <button class="btn btn-outline-secondary btn-sm" onclick="setQ('MATCH (t:Trader)-[r]->(x) RETURN t.trader_id AS trader, type(r) AS rel, labels(x)[0] AS to, coalesce(x.alert_id,x.account_id,x.ip_address,x.symbol,\'\') AS id LIMIT 50')">Traders</button>
+      <button class="btn btn-outline-secondary btn-sm" onclick="setQ('MATCH (t1:Trader)-[:OPERATES_FROM]->(ip:IPAddress)<-[:OPERATES_FROM]-(t2:Trader) WHERE t1.trader_id < t2.trader_id RETURN t1.trader_id,t2.trader_id,ip.ip_address LIMIT 25')">Shared IP</button>
+    </div>
+    <div class="text-muted small mt-2">Credentials (server-side): neo4j/surveillance123 via <code>NEO4J_HTTP</code> (default http://127.0.0.1:7474).</div>
+  </div>
+</div>
+<div class="card shadow">
+  <div class="card-header py-2 d-flex align-items-center justify-content-between">
+    <strong>Result</strong>
+    <ul class="nav nav-pills nav-sm" id="resTabs" role="tablist">
+      <li class="nav-item" role="presentation"><button class="nav-link active py-0 px-2" id="tab-table" data-bs-toggle="tab" data-bs-target="#pane-table" type="button">Table</button></li>
+      <li class="nav-item" role="presentation"><button class="nav-link py-0 px-2" id="tab-json" data-bs-toggle="tab" data-bs-target="#pane-json" type="button">JSON</button></li>
+    </ul>
+  </div>
+  <div class="card-body">
+    <div class="tab-content">
+      <div class="tab-pane fade show active" id="pane-table">
+        <div id="tableOut" class="table-responsive" style="max-height:55vh;overflow:auto"><span class="text-muted">Ready.</span></div>
+      </div>
+      <div class="tab-pane fade" id="pane-json">
+        <pre id="jsonOut" class="mb-0" style="white-space:pre-wrap;max-height:55vh;overflow:auto">Ready.</pre>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function setQ(q){document.getElementById('cy').value=q;}
+function esc(v){ if(v===null||v===undefined) return '<span class="text-muted">null</span>'; if(typeof v==='object') return escapeHtml(JSON.stringify(v)); return escapeHtml(String(v)); }
+function escapeHtml(s){ return s.replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function renderTable(j){
+  const el=document.getElementById('tableOut');
+  if(j.error){ el.innerHTML='<div class="alert alert-danger mb-0">'+escapeHtml(j.error)+'</div>'; return; }
+  const errs=(j.errors||[]);
+  if(errs.length){ el.innerHTML='<div class="alert alert-danger mb-0">'+escapeHtml(errs.map(e=>e.message||JSON.stringify(e)).join('; '))+'</div>'; return; }
+  const res=(j.results||[])[0];
+  if(!res){ el.innerHTML='<span class="text-muted">No results.</span>'; return; }
+  const cols=res.columns||[], rows=(res.data||[]);
+  if(!cols.length){ el.innerHTML='<span class="text-muted">Query executed (no columns returned).</span>'; return; }
+  let h='<table class="table table-sm table-bordered table-striped mb-0"><thead><tr>'+cols.map(c=>'<th>'+escapeHtml(c)+'</th>').join('')+'</tr></thead><tbody>';
+  if(!rows.length){ h+='<tr><td colspan="'+cols.length+'" class="text-muted text-center">No rows</td></tr>'; }
+  for(const r of rows){ const row=r.row||[]; h+='<tr>'+cols.map((_,i)=>'<td>'+esc(row[i])+'</td>').join('')+'</tr>'; }
+  h+='</tbody></table><div class="text-muted small mt-1">'+rows.length+' row(s)</div>';
+  el.innerHTML=h;
+}
+async function runQ(){
+  const jsonOut=document.getElementById('jsonOut'), tableOut=document.getElementById('tableOut');
+  jsonOut.textContent='Running...'; tableOut.innerHTML='<span class="text-muted">Running...</span>';
+  try{
+    const r=await fetch('/graph/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:document.getElementById('cy').value})});
+    const j=await r.json();
+    jsonOut.textContent=JSON.stringify(j,null,2);
+    renderTable(j);
+  }catch(e){
+    jsonOut.textContent='Error: '+e;
+    tableOut.innerHTML='<div class="alert alert-danger mb-0">'+escapeHtml(String(e))+'</div>';
+  }
+}
+</script>
+{% endblock %}

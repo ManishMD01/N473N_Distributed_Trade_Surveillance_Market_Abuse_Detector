@@ -1,22 +1,38 @@
 {% extends "base.html" %}
-
 {% block title %}Graph Analysis - Trade Surveillance{% endblock %}
-
+{% block page_title %}Graph Intelligence - Neo4j{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
-    <h1 class="h2">Graph Intelligence - Neo4j</h1>
+<div class="alert alert-warning">
+  <strong>Cloud Shell / Web Preview:</strong> Neo4j Browser’s <code>:server connect</code> uses <strong>Bolt (TCP :7687)</strong>, which Web Preview cannot proxy. Use the <strong>HTTP Graph Console</strong> below, or open Neo4j Browser locally via <code>gcloud cloud-shell ssh</code> port forwarding (7474+7687).
 </div>
-
-<div class="card shadow mb-4">
-    <div class="card-header py-3">
-        <h6 class="m-0 font-weight-bold text-primary">Neo4j Browser</h6>
+<div class="row">
+  <div class="col-lg-6 mb-4">
+    <div class="card shadow h-100">
+      <div class="card-header py-3"><h6 class="m-0 fw-bold text-primary">HTTP Graph Console (works in preview)</h6></div>
+      <div class="card-body">
+        <p>Runs Cypher over Neo4j’s HTTP API (no Bolt required).</p>
+        <a href="{{ url_for('graph_console') }}" class="btn btn-primary">Open Graph Console</a>
+        <p class="mt-3 text-muted small mb-0">Server connects to Neo4j at <code>127.0.0.1:7474</code> using <code>neo4j/surveillance123</code>.</p>
+      </div>
     </div>
-    <div class="card-body">
-        <p>Access the Neo4j graph database for entity resolution and collusion detection.</p>
-        <a href="http://localhost:7474" target="_blank" class="btn btn-primary">
-            Open Neo4j Browser
-        </a>
-        <p class="mt-3 text-muted">Credentials: neo4j / surveillance123</p>
+  </div>
+  <div class="col-lg-6 mb-4">
+    <div class="card shadow h-100">
+      <div class="card-header py-3"><h6 class="m-0 fw-bold text-primary">Neo4j Browser (requires Bolt/TCP)</h6></div>
+      <div class="card-body">
+        <p>Browser UI loads, but database access needs Bolt forwarding.</p>
+        <a href="http://localhost:7475/browser/" target="_blank" class="btn btn-outline-primary me-2">Preview UI (:7475)</a>
+        <a href="http://localhost:7474/browser/" target="_blank" class="btn btn-outline-secondary">Direct (:7474)</a>
+        <hr>
+        <div class="small text-muted">
+          <div><strong>Full Browser locally:</strong></div>
+          <code>gcloud cloud-shell ssh --authorize-session -- -N -L 7474:localhost:7474 -L 7687:localhost:7687</code>
+          <div class="mt-1">Then open <code>http://localhost:7474/browser/</code> and <code>:server connect</code> to <code>bolt://localhost:7687</code> (neo4j/surveillance123).</div>
+          <div class="mt-2"><strong>CLI (works now):</strong> <code>docker exec -it trade_surveillance_neo4j cypher-shell -u neo4j -p surveillance123</code></div>
+        </div>
+      </div>
     </div>
+  </div>
 </div>
 {% endblock %}
+
